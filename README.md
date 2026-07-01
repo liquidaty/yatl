@@ -1,5 +1,7 @@
 # yatl
 
+[![ci](https://github.com/liquidaty/yatl/actions/workflows/ci.yml/badge.svg)](https://github.com/liquidaty/yatl/actions/workflows/ci.yml)
+
 **yatl** is a small, streaming, event-driven (SAX) parser for
 [TOON](https://github.com/toon-format/spec) (Token-Oriented Object Notation),
 written in portable C11.
