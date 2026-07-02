@@ -559,7 +559,16 @@ static int emit_array_header(yatl_handle h, const char *p, const char *end,
         if (emit_start_array(h) != 0) return -1;
         return emit_end_array(h);
     }
-    parse_count(&p, end, &expected, &has_count);
+    {
+        /* §6: the bracket segment must be a length with digits present and no
+         * leading zeros ("0" is the only zero form); [03], [|] etc. are errors. */
+        const char *digs = p;
+        parse_count(&p, end, &expected, &has_count);
+        if (!has_count || (p - digs > 1 && digs[0] == '0')) {
+            set_err(h, "malformed array length in header", h->line_off);
+            return -1;
+        }
+    }
     if (p < end && (*p == '\t' || *p == '|')) { delim = (unsigned char)*p; p++; }
     if (p >= end || *p != ']') { set_err(h, "expected ']' in array header", h->line_off); return -1; }
     p++;                                        /* ']' */

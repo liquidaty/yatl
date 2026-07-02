@@ -150,6 +150,10 @@ int main(void) {
     /* errors */
     err("len_low",    "x[3]: 1,2\n");
     err("len_high",   "x[1]: 1,2\n");
+    /* spec §6: bracket length requires digits, no leading zeros */
+    err("len_leading_zero", "x[03]: 1,2,3\n");
+    err("len_missing",      "x[|]: a|b\n");
+    ok("len_zero_list",     "x[0]:\n",       "{k(x)[]}");
     err("need_quote", "x: a,b\n");
     err("bad_escape", "x: \"a\\q\"\n");
     err("trailing",   "42\nfoo: 1\n");
