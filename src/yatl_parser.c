@@ -119,21 +119,29 @@ static int looks_like_key(const char *ke, const char *end) {
     return ke < end && (*ke == ':' || *ke == '[');
 }
 
-/* Scan one delimiter-separated field at p: a quoted token (skip_quoted) or a
- * bare run up to `delim`/end. Sets *fe just past the field. Returns 0, or -1 on
- * an unterminated quote (error set). */
+/* Scan one delimiter-separated field at p: optional leading spaces, then a
+ * quoted token (skip_quoted) or a bare run; either way the field extends to
+ * the next unquoted `delim`/end, so *fe always lands on the separator or end.
+ * Trimming is the caller's job. Returns 0, or -1 on an unterminated quote
+ * (error set). */
 static int scan_field(yatl_handle h, const char *p, const char *end,
                       unsigned char delim, const char **fe) {
-    if (p < end && *p == '"') {
-        const char *q = skip_quoted(p, end);
+    const char *q = p;
+    while (q < end && *q == ' ') q++;
+    if (q < end && *q == '"') {
+        q = skip_quoted(q, end);
         if (!q) { set_err(h, "unterminated quoted string", h->line_off); return -1; }
-        *fe = q;
-    } else {
-        const char *q = p;
-        while (q < end && *q != (char)delim) q++;
-        *fe = q;
     }
+    while (q < end && *q != (char)delim) q++;
+    *fe = q;
     return 0;
+}
+
+/* Trim surrounding ASCII spaces from [*s,*e): split tokens are space-trimmed,
+ * and an all-space token becomes the empty string (§11.2). */
+static void trim_spaces(const char **s, const char **e) {
+    while (*s < *e && **s == ' ') (*s)++;
+    while (*e > *s && (*e)[-1] == ' ') (*e)--;
 }
 
 /* Classify a numeric token: 0 not a number, 1 integer, 2 floating point.
@@ -499,24 +507,27 @@ static void parse_count(const char **pp, const char *end, size_t *val, int *has)
 }
 
 /* Split delimiter-separated scalar elements in [p,end) and emit them as array
- * body. Returns element count, or (size_t)-1 on error. */
+ * body. Tokens are space-trimmed and empty tokens are preserved (§11.2), so a
+ * trailing delimiter yields a final empty string. Returns element count, or
+ * (size_t)-1 on error. */
 static size_t emit_inline_elements(yatl_handle h, const char *p, const char *end,
                                    unsigned char delim) {
     size_t count = 0;
-    while (p < end) {
-        const char *elem = p, *fe;
+    if (p == end)
+        return 0;
+    for (;;) {
+        const char *ts = p, *te, *fe;
         if (scan_field(h, p, end, delim, &fe) != 0)
             return (size_t)-1;
-        if (emit_scalar(h, elem, (size_t)(fe - elem), delim) != 0)
+        te = fe;
+        trim_spaces(&ts, &te);
+        if (emit_scalar(h, ts, (size_t)(te - ts), delim) != 0)
             return (size_t)-1;
-        p = fe;
-        if (p < end) {                          /* must be the field separator */
-            if (*p != (char)delim) { set_err(h, "expected delimiter", h->line_off); return (size_t)-1; }
-            p++;
-        }
         count++;
+        if (fe == end)
+            return count;
+        p = fe + 1;                             /* scan_field stopped on the separator */
     }
-    return count;
 }
 
 /* Duplicate a key token [ks,ke) (quoted or bare) into freshly allocated
@@ -778,10 +789,12 @@ static int handle_row(yatl_handle h, size_t fi, const char *p, const char *end,
 
     if (emit_start_map(h) != 0) return -1;
     while (col < ncols) {
-        const char *cs = p, *fe;
+        const char *cs = p, *ce, *fe;
         if (emit_key_bytes(h, cols[col], collen[col]) != 0) return -1;
         if (scan_field(h, p, end, delim, &fe) != 0) return -1;
-        if (emit_scalar(h, cs, (size_t)(fe - cs), delim) != 0) return -1;
+        ce = fe;
+        trim_spaces(&cs, &ce);
+        if (emit_scalar(h, cs, (size_t)(ce - cs), delim) != 0) return -1;
         p = fe;
         col++;
         if (col < ncols) {

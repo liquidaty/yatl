@@ -120,6 +120,17 @@ int main(void) {
     ok("tabular_root","[2]{x,y}:\n  1,2\n  3,4\n", "[{k(x)#1k(y)#2}{k(x)#3k(y)#4}]");
 
     /* delimiters */
+    /* spec §11.2: splitting trims surrounding spaces and preserves empty
+     * tokens (so a trailing delimiter yields a final empty string); quoted
+     * tokens keep interior spaces and may carry surrounding ones. */
+    ok("inline_spaces",   "x[3]: a, b , c\n",      "{k(x)[s(a)s(b)s(c)]}");
+    ok("inline_empty_ws", "x[3]: a, ,c\n",         "{k(x)[s(a)s()s(c)]}");
+    ok("inline_trailing", "x[2]: a,\n",            "{k(x)[s(a)s()]}");
+    ok("inline_quote_ws", "x[2]: \"a,x\" , b\n",   "{k(x)[s(a,x)s(b)]}");
+    ok("quoted_inner_ws", "x[1]: \" a \"\n",       "{k(x)[s( a )]}");
+    ok("row_spaces",      "[1]{a,b}:\n  1, 2\n",   "[{k(a)#1k(b)#2}]");
+    err("inline_trailing_count", "x[1]: a,\n");
+
     ok("pipe",        "x[2|]: a|b\n",              "{k(x)[s(a)s(b)]}");
     ok("tab",         "x[2\t]: a\tb\n",            "{k(x)[s(a)s(b)]}");
     ok("tab_table",   "[1\t]{a\tb}:\n  1\t2\n",    "[{k(a)#1k(b)#2}]");
