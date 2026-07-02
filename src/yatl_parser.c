@@ -846,8 +846,21 @@ static void process_line(yatl_handle h) {
     if (indent) content += indent;
     clen -= indent;
 
-    if (clen == 0)
-        return;                                  /* blank line: ignore */
+    if (clen == 0) {                             /* blank line */
+        /* §12: ignorable outside arrays, but an error inside an array or
+         * tabular rows. An array is still consuming items while its declared
+         * count is unmet (a reference decoder stops reading items exactly at
+         * the count, so later blanks fall outside the array). */
+        size_t fi;
+        for (fi = 0; fi < h->nframes; fi++) {
+            yatl_frame *f = &h->frames[fi];
+            if (f->kind != FR_OBJ && f->has_expected && f->emitted < f->expected) {
+                set_err(h, "blank line inside array", h->line_off);
+                return;
+            }
+        }
+        return;
+    }
 
     if (content[0] == '-' && (clen == 1 || content[1] == ' ')) {
         is_item = 1;

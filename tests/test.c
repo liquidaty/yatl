@@ -131,6 +131,17 @@ int main(void) {
     ok("row_spaces",      "[1]{a,b}:\n  1, 2\n",   "[{k(a)#1k(b)#2}]");
     err("inline_trailing_count", "x[1]: a,\n");
 
+    /* spec §12: blank lines are ignorable outside arrays, an error inside an
+     * array (i.e. while a declared item/row count is still unmet) */
+    ok("blank_between_fields", "a: 1\n\nb: 2\n",            "{k(a)#1k(b)#2}");
+    ok("blank_nested_obj",     "a:\n  b: 1\n\n  c: 2\n",    "{k(a){k(b)#1k(c)#2}}");
+    ok("blank_after_array",    "x[1]:\n  - a\n\nb: 2\n",    "{k(x)[s(a)]k(b)#2}");
+    ok("trailing_newlines",    "a: 1\n\n\n",                "{k(a)#1}");
+    err("blank_in_list",       "x[2]:\n  - a\n\n  - b\n");
+    err("blank_in_list_sp",    "x[2]:\n  - a\n  \n  - b\n");
+    err("blank_in_rows",       "[2]{a}:\n  1\n\n  2\n");
+    err("blank_in_list_objs",  "x[2]:\n  - k: 1\n\n  - k: 2\n");
+
     ok("pipe",        "x[2|]: a|b\n",              "{k(x)[s(a)s(b)]}");
     ok("tab",         "x[2\t]: a\tb\n",            "{k(x)[s(a)s(b)]}");
     ok("tab_table",   "[1\t]{a\tb}:\n  1\t2\n",    "[{k(a)#1k(b)#2}]");
