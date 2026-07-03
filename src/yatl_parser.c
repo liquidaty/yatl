@@ -119,21 +119,29 @@ static int looks_like_key(const char *ke, const char *end) {
     return ke < end && (*ke == ':' || *ke == '[');
 }
 
-/* Scan one delimiter-separated field at p: a quoted token (skip_quoted) or a
- * bare run up to `delim`/end. Sets *fe just past the field. Returns 0, or -1 on
- * an unterminated quote (error set). */
+/* Scan one delimiter-separated field at p: optional leading spaces, then a
+ * quoted token (skip_quoted) or a bare run; either way the field extends to
+ * the next unquoted `delim`/end, so *fe always lands on the separator or end.
+ * Trimming is the caller's job. Returns 0, or -1 on an unterminated quote
+ * (error set). */
 static int scan_field(yatl_handle h, const char *p, const char *end,
                       unsigned char delim, const char **fe) {
-    if (p < end && *p == '"') {
-        const char *q = skip_quoted(p, end);
+    const char *q = p;
+    while (q < end && *q == ' ') q++;
+    if (q < end && *q == '"') {
+        q = skip_quoted(q, end);
         if (!q) { set_err(h, "unterminated quoted string", h->line_off); return -1; }
-        *fe = q;
-    } else {
-        const char *q = p;
-        while (q < end && *q != (char)delim) q++;
-        *fe = q;
     }
+    while (q < end && *q != (char)delim) q++;
+    *fe = q;
     return 0;
+}
+
+/* Trim surrounding ASCII spaces from [*s,*e): split tokens are space-trimmed,
+ * and an all-space token becomes the empty string (§11.2). */
+static void trim_spaces(const char **s, const char **e) {
+    while (*s < *e && **s == ' ') (*s)++;
+    while (*e > *s && (*e)[-1] == ' ') (*e)--;
 }
 
 /* Classify a numeric token: 0 not a number, 1 integer, 2 floating point.
@@ -239,8 +247,8 @@ static int decode_quoted(yatl_handle h, const char *s, const char *e) {
             if (yatl_buf_putc(&h->scratch, (unsigned char)out) != 0)
                 return -2;
             p++;
-        } else if (c < 0x20) {
-            return -1;                       /* unescaped control byte */
+        } else if (c < 0x20 && c != '\t') {  /* HTAB is a legal unescaped-char (§7.1) */
+            return -1;                       /* other unescaped control byte */
         } else {
             if (yatl_buf_putc(&h->scratch, c) != 0)
                 return -2;
@@ -499,24 +507,27 @@ static void parse_count(const char **pp, const char *end, size_t *val, int *has)
 }
 
 /* Split delimiter-separated scalar elements in [p,end) and emit them as array
- * body. Returns element count, or (size_t)-1 on error. */
+ * body. Tokens are space-trimmed and empty tokens are preserved (§11.2), so a
+ * trailing delimiter yields a final empty string. Returns element count, or
+ * (size_t)-1 on error. */
 static size_t emit_inline_elements(yatl_handle h, const char *p, const char *end,
                                    unsigned char delim) {
     size_t count = 0;
-    while (p < end) {
-        const char *elem = p, *fe;
+    if (p == end)
+        return 0;
+    for (;;) {
+        const char *ts = p, *te, *fe;
         if (scan_field(h, p, end, delim, &fe) != 0)
             return (size_t)-1;
-        if (emit_scalar(h, elem, (size_t)(fe - elem), delim) != 0)
+        te = fe;
+        trim_spaces(&ts, &te);
+        if (emit_scalar(h, ts, (size_t)(te - ts), delim) != 0)
             return (size_t)-1;
-        p = fe;
-        if (p < end) {                          /* must be the field separator */
-            if (*p != (char)delim) { set_err(h, "expected delimiter", h->line_off); return (size_t)-1; }
-            p++;
-        }
         count++;
+        if (fe == end)
+            return count;
+        p = fe + 1;                             /* scan_field stopped on the separator */
     }
-    return count;
 }
 
 /* Duplicate a key token [ks,ke) (quoted or bare) into freshly allocated
@@ -544,22 +555,27 @@ static unsigned char *dup_token(yatl_handle h, const char *ks, const char *ke,
     return r;
 }
 
-/* Parse a TOON array header beginning at [p,end) where *p == '['. Forms: empty
- * ("[]"), inline ("[N]: a,b"), tabular ("[N]{cols}:") or list body ("[N]:").
- * Tabular/list push a frame at `header_indent`. Returns 0 on success. */
+/* Parse a TOON array header beginning at [p,end) where *p == '['. Forms:
+ * inline ("[N]: a,b"), tabular ("[N]{cols}:") or list body ("[N]:").
+ * Tabular/list push a frame at `header_indent`. The bare "[]" token is not a
+ * header (it is valid only at root and after "key: ", both handled by the
+ * callers), so it fails the length check here. Returns 0 on success. */
 static int emit_array_header(yatl_handle h, const char *p, const char *end,
                              unsigned header_indent) {
     size_t expected;
     int has_count;
     unsigned char delim = ',';
     p++;                                        /* '[' */
-    if (p < end && *p == ']') {                 /* empty array */
-        p++;
-        if (p != end) { set_err(h, "trailing text after []", h->line_off); return -1; }
-        if (emit_start_array(h) != 0) return -1;
-        return emit_end_array(h);
+    {
+        /* §6: the bracket segment must be a length with digits present and no
+         * leading zeros ("0" is the only zero form); [03], [|] etc. are errors. */
+        const char *digs = p;
+        parse_count(&p, end, &expected, &has_count);
+        if (!has_count || (p - digs > 1 && digs[0] == '0')) {
+            set_err(h, "malformed array length in header", h->line_off);
+            return -1;
+        }
     }
-    parse_count(&p, end, &expected, &has_count);
     if (p < end && (*p == '\t' || *p == '|')) { delim = (unsigned char)*p; p++; }
     if (p >= end || *p != ']') { set_err(h, "expected ']' in array header", h->line_off); return -1; }
     p++;                                        /* ']' */
@@ -769,10 +785,12 @@ static int handle_row(yatl_handle h, size_t fi, const char *p, const char *end,
 
     if (emit_start_map(h) != 0) return -1;
     while (col < ncols) {
-        const char *cs = p, *fe;
+        const char *cs = p, *ce, *fe;
         if (emit_key_bytes(h, cols[col], collen[col]) != 0) return -1;
         if (scan_field(h, p, end, delim, &fe) != 0) return -1;
-        if (emit_scalar(h, cs, (size_t)(fe - cs), delim) != 0) return -1;
+        ce = fe;
+        trim_spaces(&cs, &ce);
+        if (emit_scalar(h, cs, (size_t)(ce - cs), delim) != 0) return -1;
         p = fe;
         col++;
         if (col < ncols) {
@@ -824,8 +842,21 @@ static void process_line(yatl_handle h) {
     if (indent) content += indent;
     clen -= indent;
 
-    if (clen == 0)
-        return;                                  /* blank line: ignore */
+    if (clen == 0) {                             /* blank line */
+        /* §12: ignorable outside arrays, but an error inside an array or
+         * tabular rows. An array is still consuming items while its declared
+         * count is unmet (a reference decoder stops reading items exactly at
+         * the count, so later blanks fall outside the array). */
+        size_t fi;
+        for (fi = 0; fi < h->nframes; fi++) {
+            yatl_frame *f = &h->frames[fi];
+            if (f->kind != FR_OBJ && f->has_expected && f->emitted < f->expected) {
+                set_err(h, "blank line inside array", h->line_off);
+                return;
+            }
+        }
+        return;
+    }
 
     if (content[0] == '-' && (clen == 1 || content[1] == ' ')) {
         is_item = 1;
@@ -845,6 +876,12 @@ static void process_line(yatl_handle h) {
     if (h->state == ST_START) {
         if (is_item) { set_err(h, "list item without an array header", h->line_off); return; }
         if (content[0] == '[') {                 /* root array */
+            if (clen == 2 && content[1] == ']') {   /* literal empty root array (§9.1) */
+                if (emit_start_array(h) != 0 || emit_end_array(h) != 0)
+                    return;
+                h->state = ST_DOC_DONE;
+                return;
+            }
             if (emit_array_header(h, content, content + clen, indent) != 0)
                 return;
             h->state = (h->nframes == 0) ? ST_DOC_DONE : ST_BODY;

@@ -120,6 +120,28 @@ int main(void) {
     ok("tabular_root","[2]{x,y}:\n  1,2\n  3,4\n", "[{k(x)#1k(y)#2}{k(x)#3k(y)#4}]");
 
     /* delimiters */
+    /* spec §11.2: splitting trims surrounding spaces and preserves empty
+     * tokens (so a trailing delimiter yields a final empty string); quoted
+     * tokens keep interior spaces and may carry surrounding ones. */
+    ok("inline_spaces",   "x[3]: a, b , c\n",      "{k(x)[s(a)s(b)s(c)]}");
+    ok("inline_empty_ws", "x[3]: a, ,c\n",         "{k(x)[s(a)s()s(c)]}");
+    ok("inline_trailing", "x[2]: a,\n",            "{k(x)[s(a)s()]}");
+    ok("inline_quote_ws", "x[2]: \"a,x\" , b\n",   "{k(x)[s(a,x)s(b)]}");
+    ok("quoted_inner_ws", "x[1]: \" a \"\n",       "{k(x)[s( a )]}");
+    ok("row_spaces",      "[1]{a,b}:\n  1, 2\n",   "[{k(a)#1k(b)#2}]");
+    err("inline_trailing_count", "x[1]: a,\n");
+
+    /* spec §12: blank lines are ignorable outside arrays, an error inside an
+     * array (i.e. while a declared item/row count is still unmet) */
+    ok("blank_between_fields", "a: 1\n\nb: 2\n",            "{k(a)#1k(b)#2}");
+    ok("blank_nested_obj",     "a:\n  b: 1\n\n  c: 2\n",    "{k(a){k(b)#1k(c)#2}}");
+    ok("blank_after_array",    "x[1]:\n  - a\n\nb: 2\n",    "{k(x)[s(a)]k(b)#2}");
+    ok("trailing_newlines",    "a: 1\n\n\n",                "{k(a)#1}");
+    err("blank_in_list",       "x[2]:\n  - a\n\n  - b\n");
+    err("blank_in_list_sp",    "x[2]:\n  - a\n  \n  - b\n");
+    err("blank_in_rows",       "[2]{a}:\n  1\n\n  2\n");
+    err("blank_in_list_objs",  "x[2]:\n  - k: 1\n\n  - k: 2\n");
+
     ok("pipe",        "x[2|]: a|b\n",              "{k(x)[s(a)s(b)]}");
     ok("tab",         "x[2\t]: a\tb\n",            "{k(x)[s(a)s(b)]}");
     ok("tab_table",   "[1\t]{a\tb}:\n  1\t2\n",    "[{k(a)#1k(b)#2}]");
@@ -133,6 +155,11 @@ int main(void) {
     err("escape_b_reject",     "m: \"a\\bb\"\n");
     err("escape_f_reject",     "m: \"a\\fb\"\n");
     err("escape_slash_reject", "m: \"a\\/b\"\n");
+    /* spec §7.1 unescaped-char includes %x09: a literal HTAB inside a quoted
+     * token is valid input, equivalent to \t; other raw controls stay errors. */
+    ok("literal_tab_str", "m: \"a\tb\"\n",         "{k(m)s(a\tb)}");
+    ok("literal_tab_key", "\"a\tb\": 1\n",         "{k(a\tb)#1}");
+    err("literal_cr_str",  "m: \"a\rb\"\n");
     ok("comma_quoted","m: \"a,b\"\n",              "{k(m)s(a,b)}");
     ok("dotted_key",  "a.b.c: 1\n",                "{k(a.b.c)#1}");
     ok("neg_and_exp", "a: -5\nb: 1.5e3\n",         "{k(a)#-5k(b)%1500}");
@@ -145,6 +172,16 @@ int main(void) {
     /* errors */
     err("len_low",    "x[3]: 1,2\n");
     err("len_high",   "x[1]: 1,2\n");
+    /* spec §6: bracket length requires digits, no leading zeros */
+    err("len_leading_zero", "x[03]: 1,2,3\n");
+    err("len_missing",      "x[|]: a|b\n");
+    ok("len_zero_list",     "x[0]:\n",       "{k(x)[]}");
+    /* the bare [] token is an empty array only at root or after "key: " (§9.1);
+     * without the colon it is a missing-colon / malformed-header error */
+    ok("root_empty_arr",    "[]",            "[]");
+    err("empty_arr_no_colon",   "x[]\n");
+    err("item_bare_empty",      "x[1]:\n  - []\n");
+    err("root_empty_trailing",  "[]\nx: 1\n");
     err("need_quote", "x: a,b\n");
     err("bad_escape", "x: \"a\\q\"\n");
     err("trailing",   "42\nfoo: 1\n");
