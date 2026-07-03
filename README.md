@@ -94,6 +94,15 @@ integers widened to `yatl_double` — see
   with strict-mode rejection of values that should have been quoted
 - declared `[N]` length validation
 
+## Spec conformance
+
+There remain unresolved differences between this implementation, the formal
+[TOON specification](https://github.com/toon-format/spec), and the
+[reference implementation](https://github.com/toon-format/toon). Some are cases
+where yatl is stricter than the spec, some where the reference is more lenient,
+and some are genuine spec ambiguities where the two implementations diverge.
+See [`TOON-SPEC-DISCREPANCIES.md`](TOON-SPEC-DISCREPANCIES.md) for the full comparison.
+
 ## Building
 
 ```sh
